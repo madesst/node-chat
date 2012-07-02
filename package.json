@@ -1,6 +1,14 @@
 {
-  "name": "rabbit.chat.js",
+  "name": "amqp-chat",
   "version": "0.2.0",
+  "keywords": [
+    "amqp",
+    "socket.io",
+    "chat"
+  ],
+  "author": {
+    "name": "madesst"
+  },
   "dependencies": {
     "socket.io": ">=0.8",
     "sesh": ">=0",
