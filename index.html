@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+<head>
+    <title>Простой чат на rabbit.js и Socket.IO</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style type="text/css">
+        #chat { height: 200px; overflow: auto; width: 400px; border: 1px solid #eee; font: 13px Helvetica, Arial; }
+        #chat p { padding: 8px; margin: 0; }
+        #chat p:nth-child(odd) { background: #F6F6F6; }
+        #form { width: 380px; background: #333; padding: 5px 10px; }
+        #form span, #form span a {color: #fff;}
+        #form input[type=text] { width: 300px; padding: 5px; background: #fff; border: 1px solid #fff; }
+        #form input[type=submit] { cursor: pointer; background: #999; border: none; padding: 6px 8px; -moz-border-radius: 8px; -webkit-border-radius: 8px; margin-left: 5px; text-shadow: 0 1px 0 #fff; }
+        #form input[type=submit]:hover { background: #A2A2A2; }
+        #form input[type=submit]:active { position: relative; top: 2px; }
+    </style>
+</head>
+<body>
+
+<p>
+    Откройте эту страницу в разных браузерах чтобы сэмулировать подключение нескольких клиентов.
+</p>
+<p>
+    Используйте GET параметр name для иммитации авторизации под различными пользователями, <a href="/index.html?name=somebody">например</a>.
+</p>
+
+<script type="text/javascript">
+    getTimeStamp('document loaded');
+    var current_user = null;
+    function getTimeStamp(description)
+    {
+        var d = new Date();
+        var timestamp =
+                (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' +
+                (d.getMinutes() < 10 ? '0' : '') + d.getMinutes() + ':' +
+                (d.getSeconds() < 10 ? '0' : '') + d.getSeconds() + '.' +
+                (d.getMilliseconds() < 100 ? (d.getMilliseconds() < 10 ? '00' : '0') : '') + d.getMilliseconds();
+        if(description)
+        {
+            console.log(description);
+        }
+        console.log(timestamp);
+        return timestamp;
+    }
+    function message(msg, type, from, to, from_me){
+        var el = document.createElement('p');
+
+        el.innerHTML = getTimeStamp('chat log updated')+' ';
+        if(from == current_user)
+        {
+            el.innerHTML = el.innerHTML + '<strong>[' + from + ']</strong> ';
+        }
+        else
+        {
+            el.innerHTML = el.innerHTML + '[' + from + '] ';
+        }
+
+        if(type == 'private')
+        {
+            el.innerHTML = el.innerHTML + 'private <strong>[' + to+ ']</strong> ';
+            el.innerHTML = el.innerHTML + '<em>' + esc(msg) + '</em>';
+        }
+        else if(to != '')
+        {
+            if(to == current_user)
+            {
+                el.innerHTML = el.innerHTML + 'to <strong>[' + to+ ']</strong> ';
+            }
+            else
+            {
+                el.innerHTML = el.innerHTML + 'to [' + to+ '] ';
+            }
+            el.innerHTML = el.innerHTML + '<em>' + esc(msg) + '</em>';
+        }
+        else
+        {
+            el.innerHTML = el.innerHTML + esc(msg);
+        }
+        document.getElementById('chat').appendChild(el);
+        document.getElementById('chat').scrollTop = 1000000;
+    }
+
+    var socket = io.connect('http://localhost:9090');
+
+    socket.on('connect', function () {
+        socket.emit('link_socket', document.cookie);
+        socket.on('set_current_user', function(obj){
+            getTimeStamp('connected to socket.io');
+            var obj = JSON.parse(obj);
+            current_user = obj.nickname;
+            document.getElementById('nickname').innerHTML = 'Вы подключены как ' + current_user + (current_user != 'Guest' ? ', <a href="/">выйти</a>' : '');
+            socket.on('message', function(obj){
+                var obj = JSON.parse(obj);
+                message(obj.message, obj.type, obj.from, obj.to, obj.from_me);
+            });
+        });
+    });
+
+    function send(){
+        if(current_user)
+        {
+            var val = document.getElementById('text').value;
+            socket.send(JSON.stringify({message: val}));
+            getTimeStamp('message sended');
+        }
+    }
+
+    function esc(msg){
+        return msg;//.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    };
+</script>
+
+<div id="chat"></div>
+<form id="form" onsubmit="send(); return false">
+    <span id="nickname">Подключение...</span>
+    <input type="text" autocomplete="off" id="text" value="to [madesst] 123"><input type="submit" value="Send">
+</form>
+
+</body>
+</html>

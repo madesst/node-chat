@@ -1,0 +1,11 @@
+{
+  "name": "rabbit.chat.js",
+  "version": "0.0.0",
+  "dependencies": {
+    "socket.io": ">=0.8",
+    "rabbit.js": ">=0.2",
+    "sesh": ">=0",
+    "cookie": ">=0"
+  }
+}
+
