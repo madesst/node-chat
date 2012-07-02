@@ -2,129 +2,119 @@ var http = require('http');
 var url = require('url');
 var fs = require('fs');
 var io = require('socket.io');
+
 var session = require('sesh/lib/core').magicSession();
 var cookie = require('cookie');
-
-var context = require('rabbit.js').createContext('amqp://localhost:5672');
+var amqp = require('amqp');
 
 var httpserver = http.createServer(handler);
-var socketioserver = io.listen(httpserver);
+var socketioserver = io.listen(httpserver).set('log level', 2);
 
-var SID_STRING = 'redis_key';
-var TIMEOUT = 3*60*1000;
+var REDIS_KEY = 'redis_key';
+var CHAT_PUBLIC_EXCHANGE_NAME = 'chat.public.exchange';
+var CHAT_PRIVATE_EXCHANGE_NAME = 'chat.private.exchange';
+var CHAT_PUBLIC_QUEUE_NAME = 'chat.public';
+var CHAT_PRIVATE_QUEUE_NAME = 'chat.private';
+var CHAT_AMQP_QUEUE_CONFIG = {durable: true, autoDelete: true};
+var CHAT_AMQP_CONNECTION_CONFIG = { host: 'localhost', login: 'guest', password: 'guest' };
 
 var socketUsers = [];//my redis :)
 var socketConnections = [];
 
-socketioserver.sockets.on('connection', function(connection) {
+socketioserver.sockets.on('connection', function(socket) {
+	var public_exchange, private_exchange, current_user, amqp_connection;
 
-	var public_pub = context.socket('PUB');
-	var public_sub = context.socket('SUB');
-	var private_sub = context.socket('SUB');
+	socket.on('link_socket', function(data) {
+		socketConnections[socket.id] = cookie.parse(data)[REDIS_KEY];
+		current_user = socketUsers[socketConnections[socket.id]] ? socketUsers[socketConnections[socket.id]] : 'Guest';
 
-	connection.on('link_socket', function(data) {
-		socketConnections[connection.id] = cookie.parse(data)[SID_STRING];
-		//some redis workaround
-		var current_user = socketUsers[socketConnections[connection.id]] ? socketUsers[socketConnections[connection.id]] : 'Guest';
+		amqp_connection = amqp.createConnection(CHAT_AMQP_CONNECTION_CONFIG);
+		amqp_connection.on('ready', function () {
+			amqp_connection.queue(CHAT_PUBLIC_QUEUE_NAME + '.'+ current_user + '.' + socket.id, CHAT_AMQP_QUEUE_CONFIG, function(q){
+				amqp_connection.exchange(CHAT_PUBLIC_EXCHANGE_NAME, {type: 'fanout', durable: true}, function (exchange) {
+					public_exchange = exchange;
+					q.bind(exchange, '#');
+					q.subscribe(function (message, headers, deliveryInfo) {
+						socket.send(JSON.stringify({
+							message: message.message,
+							type: 'public',
+							from: message.from,
+							to: message.to
+						}));
+					});
+				});
+			});
 
-		connection.emit('set_current_user', JSON.stringify({
-			nickname: current_user
-		}));
+			amqp_connection.queue(CHAT_PRIVATE_QUEUE_NAME + '.'+ current_user + '.' + socket.id, CHAT_AMQP_QUEUE_CONFIG, function(q){
+				amqp_connection.exchange(CHAT_PRIVATE_EXCHANGE_NAME, {type: 'topic', durable: true}, function (exchange) {
+					private_exchange = exchange;
+					q.bind(private_exchange, '#.'+current_user+'.#');
+					q.subscribe(function (message, headers, deliveryInfo) {
+						socket.send(JSON.stringify({
+							message: message.message,
+							type: 'private',
+							from: message.from,
+							to: message.to
+						}));
+					});
+				});
 
-		public_sub.connect('chat');public_sub.setEncoding('utf8');
-		private_sub.connect('chat.'+current_user);private_sub.setEncoding('utf8');
-		public_pub.connect('chat');
-
-		public_sub.on('data', function(msg) {
-			msg = JSON.parse(msg);
-			connection.send(JSON.stringify({
-				message: msg.message,
-				type: 'public',
-				from: msg.from,
-				to: msg.to
-			}));
+				socket.emit('set_current_user', JSON.stringify({
+					nickname: current_user
+				}));
+			});
 		});
-
-		private_sub.on('data', function(msg) {
-			msg = JSON.parse(msg);
-			connection.send(JSON.stringify({
-				message: msg.message,
-				type: 'private',
-				from: msg.from,
-				to: msg.to
-			}));
-		});
-
-		return current_user;
 	});
 
-	connection.on('message', function(msg) {
-		msg = JSON.parse(msg);
-		if(msg.message == 'undefined')
-		{
+	socket.on('message', function(data) {
+		var msg = JSON.parse(data);
+		if(message == 'undefined'){
 			return false;
 		}
 
-		//some redis workaround
-		var current_user = socketUsers[socketConnections[connection.id]] ? socketUsers[socketConnections[connection.id]] : 'Guest';
+		current_user = socketUsers[socketConnections[socket.id]] ? socketUsers[socketConnections[socket.id]] : 'Guest';
 
-		var type_private_check = msg.message.match(/private\s\[(.*)\]\s(.*)/);
-		if(type_private_check)
-		{
-			var recipients = type_private_check[1];
-			message = type_private_check[2];
+		var recipients = '';
+		var message = msg.message;
+		var exchanger = public_exchange;
+		var routing_key = 'some_chatroom.'+current_user;
 
-			var my_private_pub = context.socket('PUB');
-			my_private_pub.connect('chat.'+current_user, function(){
-				my_private_pub.write(JSON.stringify({message: message, from: current_user, to: recipients}));
-				my_private_pub.destroy();
-			});
-
-			var recipient_private_pub = context.socket('PUB');
-			recipient_private_pub.connect('chat.'+recipients, function(){
-				recipient_private_pub.write(JSON.stringify({message: message, from: current_user, to: recipients}));
-				recipient_private_pub.destroy();
-			});
-		}
-		else //Public message
-		{
-			var recipients = '';
-			var message = msg.message;
+		var type_private_check = message.match(/private\s\[(.*)\]\s(.*)/);
+		if(type_private_check){//Private message
+			recipients = type_private_check[1]; message = type_private_check[2];
+			routing_key = current_user+'.'+recipients;
+			exchanger = private_exchange;
+		} else{//Public message
 			var type_to_check = message.match(/to\s\[(.*)\]\s(.*)/);
-			if(type_to_check)
-			{
-				recipients = type_to_check[1];
-				message = type_to_check[2];
-			}
-
-			public_pub.write({message: message, from: current_user, to: recipients});
+			if(type_to_check) { recipients = type_to_check[1]; message = type_to_check[2]; }
 		}
+
+		exchanger.publish(routing_key, {message: message, from: current_user, to: recipients}, {contentType: 'application/json'});
 	});
 
-	connection.on('disconnect', function() {
-		public_pub.destroy();
-		public_sub.destroy();
-		private_sub.destroy();
+	socket.on('disconnect', function() {
+		//TODO: drop key from redis
+//		socketUsers[socketConnections[socket.id]] = null;
+//		socketConnections[socket.id] = null;
 	});
 });
 
 httpserver.listen(9090, '0.0.0.0');
 
-// ==== boring detail
-
 function handler(request, response) {
 	var path = url.parse(request.url).pathname;
 	switch (path){
-		case '/':
+		case '/logout':
 			socketUsers[request.session.id] = null;
 			response.writeHead(200, {
 				'Content-Type': 'text/html',
 				'Set-Cookie': [
 					request.session.getSetCookieHeaderValue(),
-					cookie.serialize(SID_STRING, request.session.id, { path: '/', expires: new Date(0) })
+					cookie.serialize(REDIS_KEY, request.session.id, { path: '/', expires: new Date(0) })//TODO: and drop key from redis
 				]
 			});
 			path = '/index.html';
+		case '/':
 		case '/index.html':
 			var urlParams = url.parse(request.url, true).query || {};
 
@@ -135,7 +125,7 @@ function handler(request, response) {
 					'Content-Type': 'text/html',
 					'Set-Cookie': [
 						request.session.getSetCookieHeaderValue(),
-						cookie.serialize(SID_STRING, request.session.id, { path: '/' })
+						cookie.serialize(REDIS_KEY, request.session.id, { path: '/' })
 					]
 				});
 			}
@@ -157,8 +147,7 @@ function handler(request, response) {
 }
 
 function send404(response){
-	if(!response.ended)
-	{
+	if(!response.ended){
 		response.writeHead(404);
 		response.write('404');
 		return response.end();
