@@ -97,11 +97,16 @@
     });
 
     function send(){
-        if(current_user)
-        {
+        if(current_user) {
             var val = document.getElementById('text').value;
             socket.send(JSON.stringify({message: val}));
             getTimeStamp('message sended');
+        }
+    }
+
+    function transfer(chat_room) {
+        if(current_user) {
+            socket.emit('transfer', JSON.stringify({chat_room: chat_room}));
         }
     }
 
@@ -111,6 +116,7 @@
 </script>
 
 <div id="chat"></div>
+<a onclick="transfer('chat_room_234');return false;" href="#">Next chatroom</a> <a onclick="transfer('someroom');return false;" href="#">Home</a>
 <form id="form" onsubmit="send(); return false">
     <span id="nickname">Подключение...</span>
     <input type="text" autocomplete="off" id="text" value="to [madesst] 123"><input type="submit" value="Send">
