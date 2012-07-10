@@ -46,7 +46,7 @@
         var el = document.createElement('p');
 
         el.innerHTML = getTimeStamp('chat log updated')+' ';
-        if(from == current_user)
+        if(from == current_user.nickname)
         {
             el.innerHTML = el.innerHTML + '<strong>[' + from + ']</strong> ';
         }
@@ -62,7 +62,7 @@
         }
         else if(to != '')
         {
-            if(to == current_user)
+            if(to == current_user.nickname)
             {
                 el.innerHTML = el.innerHTML + 'to <strong>[' + to+ ']</strong> ';
             }
@@ -83,16 +83,24 @@
     var socket = io.connect('http://localhost:9090');
 
     socket.on('connect', function () {
-        socket.emit('link_socket', document.cookie);
-        socket.on('set_current_user', function(obj){
-            getTimeStamp('connected to socket.io');
-            var obj = JSON.parse(obj);
-            current_user = obj.nickname;
-            document.getElementById('nickname').innerHTML = 'Вы подключены как ' + current_user + (current_user != 'Guest' ? ', <a href="/">выйти</a>' : '');
+        getTimeStamp('connected to socket.io');
+        socket.emit('chat_connect', document.cookie);
+        socket.on('chat_connect_complete', function(obj){
+
+            getTimeStamp('connected to chat');
+            current_user = JSON.parse(obj).current_user;
+            document.getElementById('nickname').innerHTML = 'You connected as ' + current_user.nickname + (current_user.nickname != 'Guest' ? ', <a href="/">logout</a>' : '')+
+            '<span id="chat_room"></span>';
+
             socket.on('message', function(obj){
                 var obj = JSON.parse(obj);
                 message(obj.message, obj.type, obj.from, obj.to, obj.from_me);
             });
+        });
+
+        socket.on('join_room_complete', function(obj){
+            var current_room = JSON.parse(obj).current_room;
+            document.getElementById('chat_room').innerHTML = ' to room ' + current_room;
         });
     });
 
@@ -106,7 +114,7 @@
 
     function transfer(chat_room) {
         if(current_user) {
-            socket.emit('transfer', JSON.stringify({chat_room: chat_room}));
+            socket.emit('join_room', JSON.stringify({chat_room: chat_room}));
         }
     }
 

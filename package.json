@@ -14,7 +14,8 @@
     "sesh": ">=0",
     "cookie": ">=0",
     "amqp": ">=0",
-    "eyes": ">=0"
+    "eyes": ">=0",
+    "cloneextend": ">=0"
   }
 }
 
